@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
 const connectDB = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 const FlowSureEventListener = require('./services/eventListener');
@@ -30,6 +32,7 @@ app.get('/', (req, res) => {
   res.json({
     message: 'FlowSure Backend API',
     version: '1.0.0',
+    documentation: '/api-docs',
     endpoints: {
       froth: '/api/froth',
       dapper: '/api/dapper',
@@ -37,6 +40,11 @@ app.get('/', (req, res) => {
     }
   });
 });
+
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'FlowSure API Documentation'
+}));
 
 app.use('/api/froth', frothRoutes);
 app.use('/api/dapper', dapperRoutes);
@@ -65,6 +73,7 @@ const startServer = async () => {
     
     app.listen(PORT, () => {
       console.log(`FlowSure backend running on port ${PORT}`);
+      console.log(`API Documentation: http://localhost:${PORT}/api-docs`);
     });
     
     process.on('SIGTERM', () => {

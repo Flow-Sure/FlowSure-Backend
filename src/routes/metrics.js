@@ -4,6 +4,16 @@ const Staker = require('../models/Staker');
 const ProtectedAsset = require('../models/ProtectedAsset');
 const ActionMetric = require('../models/ActionMetric');
 
+/**
+ * @swagger
+ * /api/metrics/staking:
+ *   get:
+ *     summary: Get staking metrics
+ *     tags: [Metrics]
+ *     responses:
+ *       200:
+ *         description: Staking statistics
+ */
 router.get('/staking', async (req, res, next) => {
   try {
     const totalStakers = await Staker.countDocuments();
@@ -21,6 +31,16 @@ router.get('/staking', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/metrics/protection:
+ *   get:
+ *     summary: Get protection metrics
+ *     tags: [Metrics]
+ *     responses:
+ *       200:
+ *         description: Asset protection statistics
+ */
 router.get('/protection', async (req, res, next) => {
   try {
     const totalProtectedAssets = await ProtectedAsset.countDocuments();
@@ -54,6 +74,16 @@ router.get('/protection', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/metrics/retry:
+ *   get:
+ *     summary: Get retry success metrics
+ *     tags: [Metrics]
+ *     responses:
+ *       200:
+ *         description: Retry statistics
+ */
 router.get('/retry', async (req, res, next) => {
   try {
     const totalRetries = await ActionMetric.countDocuments();
@@ -72,6 +102,16 @@ router.get('/retry', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/metrics/vault:
+ *   get:
+ *     summary: Get vault metrics
+ *     tags: [Metrics]
+ *     responses:
+ *       200:
+ *         description: Vault statistics
+ */
 router.get('/vault', async (req, res, next) => {
   try {
     res.json({

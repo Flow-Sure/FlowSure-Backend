@@ -10,6 +10,23 @@ const { validateAddress, validateAssetType } = require('../middleware/validation
 const ProtectedAsset = require('../models/ProtectedAsset');
 const Compensation = require('../models/Compensation');
 
+/**
+ * @swagger
+ * /api/dapper/assets/{address}:
+ *   get:
+ *     summary: Get user's Dapper NFT assets
+ *     tags: [Dapper]
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: "0x8401ed4fc6788c8a"
+ *     responses:
+ *       200:
+ *         description: User's NFT assets from all Dapper platforms
+ */
 router.get('/assets/:address', validateAddress, async (req, res, next) => {
   try {
     const { address } = req.params;
@@ -45,6 +62,41 @@ router.get('/assets/:address', validateAddress, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/dapper/insure:
+ *   post:
+ *     summary: Insure a Dapper NFT asset
+ *     tags: [Dapper]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - user
+ *               - assetType
+ *               - assetId
+ *               - actionType
+ *             properties:
+ *               user:
+ *                 type: string
+ *                 example: "0x8401ed4fc6788c8a"
+ *               assetType:
+ *                 type: string
+ *                 enum: [NBA_TOP_SHOT, NFL_ALL_DAY, DISNEY_PINNACLE]
+ *                 example: "NBA_TOP_SHOT"
+ *               assetId:
+ *                 type: number
+ *                 example: 12345
+ *               actionType:
+ *                 type: string
+ *                 example: "PACK_OPENING"
+ *     responses:
+ *       200:
+ *         description: Asset protection successful
+ */
 router.post('/insure', validateAssetType, async (req, res, next) => {
   try {
     const { user, assetType, assetId, actionType } = req.body;
@@ -84,6 +136,23 @@ router.post('/insure', validateAssetType, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/dapper/history/{address}:
+ *   get:
+ *     summary: Get protection history for an address
+ *     tags: [Dapper]
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: "0x8401ed4fc6788c8a"
+ *     responses:
+ *       200:
+ *         description: Protection history and compensations
+ */
 router.get('/history/:address', validateAddress, async (req, res, next) => {
   try {
     const { address } = req.params;

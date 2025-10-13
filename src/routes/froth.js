@@ -5,6 +5,31 @@ const { queryStakerInfo, stakeTokens, unstakeTokens } = require('../services/flo
 const { validateAddress, validateStakeAmount } = require('../middleware/validation');
 const Staker = require('../models/Staker');
 
+/**
+ * @swagger
+ * /api/froth/price:
+ *   get:
+ *     summary: Get current FROTH token price
+ *     tags: [FROTH]
+ *     responses:
+ *       200:
+ *         description: Current FROTH price
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 price:
+ *                   type: number
+ *                   example: 0.15
+ *                 currency:
+ *                   type: string
+ *                   example: USD
+ *                 timestamp:
+ *                   type: number
+ *                 source:
+ *                   type: string
+ */
 router.get('/price', async (req, res, next) => {
   try {
     const priceData = await fetchFrothPrice();
@@ -14,6 +39,49 @@ router.get('/price', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/froth/stake:
+ *   post:
+ *     summary: Stake FROTH tokens
+ *     tags: [FROTH]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - user
+ *               - amount
+ *             properties:
+ *               user:
+ *                 type: string
+ *                 example: "0x8401ed4fc6788c8a"
+ *               amount:
+ *                 type: number
+ *                 example: 100.0
+ *     responses:
+ *       200:
+ *         description: Staking successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 txId:
+ *                   type: string
+ *                 status:
+ *                   type: string
+ *                 stakedAmount:
+ *                   type: number
+ *                 totalStaked:
+ *                   type: number
+ *                 discount:
+ *                   type: number
+ *                 discountPercentage:
+ *                   type: number
+ */
 router.post('/stake', validateStakeAmount, async (req, res, next) => {
   try {
     const { user, amount } = req.body;
@@ -44,6 +112,32 @@ router.post('/stake', validateStakeAmount, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/froth/unstake:
+ *   post:
+ *     summary: Unstake FROTH tokens
+ *     tags: [FROTH]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - user
+ *               - amount
+ *             properties:
+ *               user:
+ *                 type: string
+ *                 example: "0x8401ed4fc6788c8a"
+ *               amount:
+ *                 type: number
+ *                 example: 25.0
+ *     responses:
+ *       200:
+ *         description: Unstaking successful
+ */
 router.post('/unstake', validateStakeAmount, async (req, res, next) => {
   try {
     const { user, amount } = req.body;
@@ -72,6 +166,23 @@ router.post('/unstake', validateStakeAmount, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/froth/staker/{address}:
+ *   get:
+ *     summary: Get staker information
+ *     tags: [FROTH]
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: "0x8401ed4fc6788c8a"
+ *     responses:
+ *       200:
+ *         description: Staker information
+ */
 router.get('/staker/:address', validateAddress, async (req, res, next) => {
   try {
     const { address } = req.params;
@@ -82,6 +193,16 @@ router.get('/staker/:address', validateAddress, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/froth/leaderboard:
+ *   get:
+ *     summary: Get staking leaderboard
+ *     tags: [FROTH]
+ *     responses:
+ *       200:
+ *         description: Top stakers leaderboard
+ */
 router.get('/leaderboard', async (req, res, next) => {
   try {
     const stakers = await Staker.find()

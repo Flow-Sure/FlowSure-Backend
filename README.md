@@ -58,6 +58,23 @@ npm run dev
 npm start
 ```
 
+The server will start and display:
+```
+MongoDB connected successfully
+Event listener initialized (subscriptions disabled for development)
+FlowSure backend running on port 3000
+API Documentation: http://localhost:3000/api-docs
+```
+
+### API Documentation
+
+Interactive Swagger documentation is available at:
+```
+http://localhost:3000/api-docs
+```
+
+See `SWAGGER_GUIDE.md` for detailed usage instructions.
+
 ## API Endpoints
 
 ### $FROTH Integration
