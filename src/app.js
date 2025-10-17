@@ -12,6 +12,7 @@ const FlowSureEventListener = require('./services/eventListener');
 const frothRoutes = require('./routes/froth');
 const dapperRoutes = require('./routes/dapper');
 const metricsRoutes = require('./routes/metrics');
+const transactionRoutes = require('./routes/transactions');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,7 +37,8 @@ app.get('/', (req, res) => {
     endpoints: {
       froth: '/api/froth',
       dapper: '/api/dapper',
-      metrics: '/api/metrics'
+      metrics: '/api/metrics',
+      transactions: '/api/transactions'
     }
   });
 });
@@ -49,6 +51,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 app.use('/api/froth', frothRoutes);
 app.use('/api/dapper', dapperRoutes);
 app.use('/api/metrics', metricsRoutes);
+app.use('/api/transactions', transactionRoutes);
 
 app.use(errorHandler);
 
