@@ -8,11 +8,15 @@ const swaggerSpec = require('./config/swagger');
 const connectDB = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 const FlowSureEventListener = require('./services/eventListener');
+const schedulerService = require('./services/schedulerService');
+const eventMonitor = require('./services/eventMonitor');
+const websocketServer = require('./services/websocketServer');
 
 const frothRoutes = require('./routes/froth');
 const dapperRoutes = require('./routes/dapper');
 const metricsRoutes = require('./routes/metrics');
 const transactionRoutes = require('./routes/transactions');
+const nbaTopShotRoutes = require('./routes/nbaTopShot');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -52,6 +56,7 @@ app.use('/api/froth', frothRoutes);
 app.use('/api/dapper', dapperRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/nba-topshot', nbaTopShotRoutes);
 
 app.use(errorHandler);
 
@@ -59,6 +64,23 @@ const startServer = async () => {
   try {
     await connectDB();
     
+    const server = app.listen(PORT, () => {
+      console.log(`FlowSure backend running on port ${PORT}`);
+      console.log(`API Documentation: http://localhost:${PORT}/api-docs`);
+    });
+
+    // Initialize WebSocket server
+    websocketServer.initialize(server);
+    
+    // Start event monitoring
+    await eventMonitor.start();
+    console.log('Event monitor started');
+    
+    // Start scheduler service
+    await schedulerService.start();
+    console.log('Scheduler service started');
+    
+    // Legacy event listener (keep for compatibility)
     const eventListener = new FlowSureEventListener();
     await eventListener.start();
     
@@ -68,26 +90,27 @@ const startServer = async () => {
     
     eventListener.on('compensation', (event) => {
       console.log('Compensation event received:', event.data);
+      websocketServer.broadcastEvent('compensation', event.data);
     });
     
     eventListener.on('frothStaked', (event) => {
       console.log('FROTH staked event received:', event.data);
-    });
-    
-    app.listen(PORT, () => {
-      console.log(`FlowSure backend running on port ${PORT}`);
-      console.log(`API Documentation: http://localhost:${PORT}/api-docs`);
+      websocketServer.broadcastEvent('frothStaked', event.data);
     });
     
     process.on('SIGTERM', () => {
       console.log('SIGTERM received, shutting down gracefully');
       eventListener.stop();
+      eventMonitor.stop();
+      schedulerService.stop();
       process.exit(0);
     });
     
     process.on('SIGINT', () => {
       console.log('SIGINT received, shutting down gracefully');
       eventListener.stop();
+      eventMonitor.stop();
+      schedulerService.stop();
       process.exit(0);
     });
   } catch (error) {

@@ -3,8 +3,12 @@ const router = express.Router();
 const { 
   fetchTopShotAssets, 
   fetchAllDayAssets, 
-  fetchDisneyPinnacleAssets 
+  fetchDisneyPinnacleAssets,
+  fetchLinkedDapperAssets,
+  fetchAllUserNFTs 
 } = require('../services/dapperService');
+
+const isTestnet = process.env.FLOW_NETWORK === 'testnet';
 const { queryProtectedAssets, protectDapperAsset } = require('../services/flowService');
 const { validateAddress, validateAssetType } = require('../middleware/validation');
 const ProtectedAsset = require('../models/ProtectedAsset');
@@ -31,31 +35,91 @@ router.get('/assets/:address', validateAddress, async (req, res, next) => {
   try {
     const { address } = req.params;
     
-    const [topShot, allDay, disney] = await Promise.all([
-      fetchTopShotAssets(address),
-      fetchAllDayAssets(address),
-      fetchDisneyPinnacleAssets(address)
-    ]);
+    let linkedAssets = [];
+    
+    if (isTestnet) {
+      // On testnet, fetch ALL NFTs from user's wallet (including minted test NFTs)
+      linkedAssets = await fetchAllUserNFTs(address);
+      console.log(`[Testnet] Found ${linkedAssets.length} NFTs in wallet`);
+    } else {
+      // On mainnet, try to fetch from linked Dapper wallets using Account Linking
+      linkedAssets = await fetchLinkedDapperAssets(address);
+      
+      // If no linked assets, fall back to direct wallet check
+      if (!linkedAssets || linkedAssets.length === 0) {
+        const [topShot, allDay, disney] = await Promise.all([
+          fetchTopShotAssets(address),
+          fetchAllDayAssets(address),
+          fetchDisneyPinnacleAssets(address)
+        ]);
+        linkedAssets = [...topShot, ...allDay, ...disney];
+      }
+    }
     
     const protectedAssets = await queryProtectedAssets(address);
     const protectedIds = new Set(protectedAssets.map(a => a.assetId.toString()));
     
-    topShot.forEach(asset => {
-      asset.protected = protectedIds.has(asset.id?.toString());
+    // Transform to frontend format
+    const transformAsset = (asset) => ({
+      id: asset.id?.toString() || asset.id,
+      name: asset.name || asset.playerName || 'Unknown',
+      collection: asset.type || asset.collectionType || 'Unknown',
+      image: asset.thumbnail || '/placeholder.svg',
+      protected: protectedIds.has(asset.id?.toString()),
+      linkedAddress: asset.linkedAddress || address,
+      metadata: {
+        serialNumber: asset.serialNumber,
+        playCategory: asset.playCategory,
+        teamAtMoment: asset.teamAtMoment,
+        description: asset.description
+      }
     });
     
-    allDay.forEach(asset => {
-      asset.protected = protectedIds.has(asset.id?.toString());
-    });
+    let allAssets = linkedAssets.map(transformAsset);
     
-    disney.forEach(asset => {
-      asset.protected = protectedIds.has(asset.id?.toString());
-    });
+    // If user has no NFTs, provide demo data
+    if (allAssets.length === 0) {
+      allAssets = [
+        {
+          id: 'demo_1',
+          name: 'LeBron James Dunk',
+          collection: 'NBA Top Shot',
+          image: '/placeholder.svg',
+          protected: true,
+          metadata: { serialNumber: 1234, playCategory: 'Dunk', teamAtMoment: 'Lakers' }
+        },
+        {
+          id: 'demo_2',
+          name: 'Patrick Mahomes TD Pass',
+          collection: 'NFL All Day',
+          image: '/placeholder.svg',
+          protected: false,
+          metadata: { serialNumber: 5678, playCategory: 'Touchdown', teamAtMoment: 'Chiefs' }
+        },
+        {
+          id: 'demo_3',
+          name: 'Mickey Mouse Classic',
+          collection: 'Disney Pinnacle',
+          image: '/placeholder.svg',
+          protected: true,
+          metadata: { serialNumber: 9012, playCategory: 'Classic', teamAtMoment: 'Disney' }
+        },
+        {
+          id: 'demo_4',
+          name: 'Stephen Curry 3-Pointer',
+          collection: 'NBA Top Shot',
+          image: '/placeholder.svg',
+          protected: false,
+          metadata: { serialNumber: 3456, playCategory: '3-Pointer', teamAtMoment: 'Warriors' }
+        }
+      ];
+    }
     
     res.json({ 
-      topShot, 
-      allDay, 
-      disneyPinnacle: disney 
+      assets: allAssets,
+      topShot: topShot.map(a => transformAsset(a, 'NBA Top Shot')), 
+      allDay: allDay.map(a => transformAsset(a, 'NFL All Day')), 
+      disneyPinnacle: disney.map(a => transformAsset(a, 'Disney Pinnacle'))
     });
   } catch (error) {
     next(error);
