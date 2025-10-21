@@ -1,5 +1,5 @@
 const validateAddress = (req, res, next) => {
-  const address = req.params.address || req.body.user;
+  const address = req.params.address || req.params.userAddress || req.body.user;
   
   if (!address) {
     return res.status(400).json({ error: 'Address is required' });

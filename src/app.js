@@ -11,12 +11,15 @@ const FlowSureEventListener = require('./services/eventListener');
 const schedulerService = require('./services/schedulerService');
 const eventMonitor = require('./services/eventMonitor');
 const websocketServer = require('./services/websocketServer');
+const scheduledTransferCron = require('./services/scheduledTransferCron');
 
 const frothRoutes = require('./routes/froth');
 const dapperRoutes = require('./routes/dapper');
 const metricsRoutes = require('./routes/metrics');
 const transactionRoutes = require('./routes/transactions');
 const nbaTopShotRoutes = require('./routes/nbaTopShot');
+const scheduledTransfersRoutes = require('./routes/scheduledTransfers');
+const recipientListsRoutes = require('./routes/recipientLists');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -42,7 +45,9 @@ app.get('/', (req, res) => {
       froth: '/api/froth',
       dapper: '/api/dapper',
       metrics: '/api/metrics',
-      transactions: '/api/transactions'
+      transactions: '/api/transactions',
+      scheduledTransfers: '/api/scheduled-transfers',
+      recipientLists: '/api/recipient-lists'
     }
   });
 });
@@ -57,6 +62,8 @@ app.use('/api/dapper', dapperRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/nba-topshot', nbaTopShotRoutes);
+app.use('/api/scheduled-transfers', scheduledTransfersRoutes);
+app.use('/api/recipient-lists', recipientListsRoutes);
 
 app.use(errorHandler);
 
@@ -79,6 +86,10 @@ const startServer = async () => {
     // Start scheduler service
     await schedulerService.start();
     console.log('Scheduler service started');
+    
+    // Start scheduled transfer cron job
+    scheduledTransferCron.start();
+    console.log('Scheduled transfer cron job started');
     
     // Legacy event listener (keep for compatibility)
     const eventListener = new FlowSureEventListener();
@@ -103,6 +114,7 @@ const startServer = async () => {
       eventListener.stop();
       eventMonitor.stop();
       schedulerService.stop();
+      scheduledTransferCron.stop();
       process.exit(0);
     });
     
@@ -111,6 +123,7 @@ const startServer = async () => {
       eventListener.stop();
       eventMonitor.stop();
       schedulerService.stop();
+      scheduledTransferCron.stop();
       process.exit(0);
     });
   } catch (error) {

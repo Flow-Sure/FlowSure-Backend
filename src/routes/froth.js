@@ -4,6 +4,7 @@ const { fetchFrothPrice } = require('../services/dapperService');
 const { queryStakerInfo, stakeTokens, unstakeTokens } = require('../services/flowService');
 const { validateAddress, validateStakeAmount } = require('../middleware/validation');
 const Staker = require('../models/Staker');
+const autoCompoundService = require('../services/autoCompoundService');
 
 /**
  * @swagger
@@ -224,6 +225,65 @@ router.get('/leaderboard', async (req, res, next) => {
       totalStakers,
       topStakers
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/auto-compound/config/:address', validateAddress, async (req, res, next) => {
+  try {
+    const { address } = req.params;
+    const config = await autoCompoundService.getCompoundConfig(address);
+    res.json(config);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/auto-compound/rewards/:address', validateAddress, async (req, res, next) => {
+  try {
+    const { address } = req.params;
+    const amount = await autoCompoundService.getPendingRewards(address);
+    res.json({ amount });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/auto-compound/enable', async (req, res, next) => {
+  try {
+    const { address, frequency } = req.body;
+    const result = await autoCompoundService.enableAutoCompound(address, frequency);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/auto-compound/disable', async (req, res, next) => {
+  try {
+    const { address } = req.body;
+    const result = await autoCompoundService.disableAutoCompound(address);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/auto-compound/execute', async (req, res, next) => {
+  try {
+    const { address } = req.body;
+    const result = await autoCompoundService.executeCompound(address);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/auto-compound/stats', async (req, res, next) => {
+  try {
+    const stats = await autoCompoundService.getGlobalStats();
+    res.json(stats);
   } catch (error) {
     next(error);
   }
