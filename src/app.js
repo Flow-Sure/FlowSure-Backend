@@ -12,6 +12,7 @@ const schedulerService = require('./services/schedulerService');
 const eventMonitor = require('./services/eventMonitor');
 const websocketServer = require('./services/websocketServer');
 const scheduledTransferCron = require('./services/scheduledTransferCron');
+const flowSchedulerCron = require('./services/flowSchedulerCron');
 
 const frothRoutes = require('./routes/froth');
 const dapperRoutes = require('./routes/dapper');
@@ -91,6 +92,10 @@ const startServer = async () => {
     scheduledTransferCron.start();
     console.log('Scheduled transfer cron job started');
     
+    // Start Flow scheduler monitor
+    flowSchedulerCron.startFlowSchedulerMonitor();
+    console.log('Flow scheduler monitor started');
+    
     // Legacy event listener (keep for compatibility)
     const eventListener = new FlowSureEventListener();
     await eventListener.start();
@@ -115,6 +120,7 @@ const startServer = async () => {
       eventMonitor.stop();
       schedulerService.stop();
       scheduledTransferCron.stop();
+      flowSchedulerCron.stopFlowSchedulerMonitor();
       process.exit(0);
     });
     
@@ -124,6 +130,7 @@ const startServer = async () => {
       eventMonitor.stop();
       schedulerService.stop();
       scheduledTransferCron.stop();
+      flowSchedulerCron.stopFlowSchedulerMonitor();
       process.exit(0);
     });
   } catch (error) {

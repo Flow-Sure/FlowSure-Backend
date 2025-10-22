@@ -6,6 +6,47 @@ const { validateAddress } = require('../middleware/validation');
 const { getAuthorizationTransaction, checkAuthorization } = require('../services/scheduledTransferFlowService');
 const { createRecurringTransfers, cancelRecurringTransfer, calculateRecurringCost, validateRecurringBalance } = require('../services/recurringTransferService');
 
+// Save Flow-scheduled transfer for tracking
+router.post('/flow-scheduled', async (req, res, next) => {
+  try {
+    const { 
+      userAddress, 
+      title, 
+      description, 
+      recipient, 
+      amount, 
+      scheduledDate,
+      transactionId
+    } = req.body;
+    
+    if (!userAddress || !title || !amount || !scheduledDate || !recipient || !transactionId) {
+      return res.status(400).json({ 
+        error: 'userAddress, title, amount, scheduledDate, recipient, and transactionId are required' 
+      });
+    }
+
+    const scheduledTransfer = new ScheduledTransfer({
+      userAddress,
+      title,
+      description,
+      recipient,
+      amount,
+      scheduledDate: new Date(scheduledDate),
+      status: 'scheduled',
+      transactionId,
+      executionMethod: 'flow_native'
+    });
+
+    await scheduledTransfer.save();
+
+    res.status(201).json({ 
+      data: scheduledTransfer 
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Create a new scheduled transfer
 router.post('/', async (req, res, next) => {
   try {

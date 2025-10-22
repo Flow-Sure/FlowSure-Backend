@@ -1,4 +1,4 @@
-const fcl = require('../config/flow');
+const { fcl } = require('../config/flow');
 const fs = require('fs');
 const path = require('path');
 
@@ -9,24 +9,196 @@ const loadCadence = (filename) => {
 };
 
 /**
- * Check if user has valid authorization for scheduled transfers
+ * Check if user has initialized the scheduled transfer handler
  */
-const checkAuthorization = async (userAddress) => {
-  // Development mode: Skip blockchain check if contracts not deployed
-  const isDevelopment = !process.env.SERVICE_ACCOUNT_PRIVATE_KEY || process.env.SKIP_BLOCKCHAIN_CHECKS === 'true';
-  
-  if (isDevelopment) {
-    console.log('⚠️  Development mode: Skipping authorization check');
+const checkHandlerInitialized = async (userAddress) => {
+  try {
+    const result = await fcl.query({
+      cadence: `
+        import ScheduledTransfer from 0x8401ed4fc6788c8a
+        
+        access(all) fun main(userAddress: Address): Bool {
+          let userAccount = getAccount(userAddress)
+          
+          // Check if handler exists in storage
+          let hasHandler = userAccount.storage.check<@AnyResource>(from: ScheduledTransfer.HandlerStoragePath)
+          
+          return hasHandler
+        }
+      `,
+      args: (arg, t) => [arg(userAddress, t.Address)]
+    });
+    
     return {
-      hasAuthorization: true,
-      isValid: true,
-      authId: 'dev_auth',
-      maxAmount: 999999.0,
-      expiryDate: Date.now() + 365 * 24 * 60 * 60 * 1000,
-      message: 'Development mode - authorization bypassed'
+      hasHandler: result,
+      message: result ? 'Handler initialized' : 'Handler not initialized'
     };
+  } catch (error) {
+    console.error('Error checking handler:', error);
+    throw error;
   }
-  
+};
+
+/**
+ * Get the transaction code for initializing the scheduled transfer handler
+ * User must sign this once before scheduling any transfers
+ */
+const getInitHandlerTransaction = () => {
+  return {
+    cadence: `
+      import ScheduledTransfer from 0x8401ed4fc6788c8a
+      import FlowTransactionScheduler from 0x8c5303eaa26202d6
+
+      transaction() {
+        prepare(signer: auth(Storage, Capabilities) &Account) {
+          // Save handler if not already present
+          if signer.storage.borrow<&AnyResource>(from: ScheduledTransfer.HandlerStoragePath) == nil {
+            let handler <- ScheduledTransfer.createHandler()
+            signer.storage.save(<-handler, to: ScheduledTransfer.HandlerStoragePath)
+          }
+
+          // Issue entitled capability for execution
+          let _ = signer.capabilities.storage
+            .issue<auth(FlowTransactionScheduler.Execute) &{FlowTransactionScheduler.TransactionHandler}>(ScheduledTransfer.HandlerStoragePath)
+
+          // Issue public capability
+          let publicCap = signer.capabilities.storage
+            .issue<&{FlowTransactionScheduler.TransactionHandler}>(ScheduledTransfer.HandlerStoragePath)
+
+          signer.capabilities.publish(publicCap, at: ScheduledTransfer.HandlerPublicPath)
+          
+          log("Scheduled transfer handler initialized")
+        }
+      }
+    `,
+    args: (arg, t) => []
+  };
+};
+
+/**
+ * Get the transaction code for scheduling a transfer
+ * User signs this to schedule a transfer at a future time
+ */
+const getScheduleTransferTransaction = (recipient, amount, delaySeconds) => {
+  return {
+    cadence: `
+      import ScheduledTransfer from 0x8401ed4fc6788c8a
+      import FlowTransactionScheduler from 0x8c5303eaa26202d6
+      import FlowToken from 0x7e60df042a9c0868
+      import FungibleToken from 0x9a0766d93b6608b7
+
+      transaction(recipient: Address, amount: UFix64, delaySeconds: UFix64) {
+        prepare(signer: auth(Storage, Capabilities) &Account) {
+          let future = getCurrentBlock().timestamp + delaySeconds
+          let priority = FlowTransactionScheduler.Priority.Medium
+          let executionEffort: UInt64 = 1000
+          
+          let transferData = ScheduledTransfer.TransferData(
+            recipient: recipient,
+            amount: amount
+          )
+          
+          let estimate = FlowTransactionScheduler.estimate(
+            data: transferData,
+            timestamp: future,
+            priority: priority,
+            executionEffort: executionEffort
+          )
+          
+          assert(
+            estimate.timestamp != nil || priority == FlowTransactionScheduler.Priority.Low,
+            message: estimate.error ?? "estimation failed"
+          )
+          
+          let vaultRef = signer.storage
+            .borrow<auth(FungibleToken.Withdraw) &FlowToken.Vault>(from: /storage/flowTokenVault)
+            ?? panic("Could not borrow FlowToken vault")
+          let fees <- vaultRef.withdraw(amount: estimate.flowFee ?? 0.0) as! @FlowToken.Vault
+          
+          var handlerCap: Capability<auth(FlowTransactionScheduler.Execute) &{FlowTransactionScheduler.TransactionHandler}>? = nil
+          
+          let controllers = signer.capabilities.storage.getControllers(forPath: ScheduledTransfer.HandlerStoragePath)
+          
+          for controller in controllers {
+            if let cap = controller.capability as? Capability<auth(FlowTransactionScheduler.Execute) &{FlowTransactionScheduler.TransactionHandler}> {
+              handlerCap = cap
+              break
+            }
+          }
+          
+          assert(handlerCap != nil, message: "Could not get handler capability")
+          
+          FlowTransactionScheduler.schedule(
+            handlerCap: handlerCap!,
+            data: transferData,
+            timestamp: future,
+            priority: priority,
+            executionEffort: executionEffort,
+            fees: <-fees
+          )
+          
+          log("Transfer scheduled")
+        }
+      }
+    `,
+    args: (arg, t) => [
+      arg(recipient, t.Address),
+      arg(amount.toFixed(8), t.UFix64),
+      arg(delaySeconds.toString(), t.UFix64)
+    ]
+  };
+};
+
+/**
+ * Execute a scheduled transfer using user's pre-authorized capability
+ * This is the backend fallback when Flow's automatic execution doesn't trigger
+ * Backend service account signs this transaction
+ */
+const executeScheduledTransfer = async (userAddress, recipient, amount) => {
+  try {
+    const transaction = `
+      import ScheduledTransfer from 0x8401ed4fc6788c8a
+      
+      transaction(userAddress: Address, recipient: Address, amount: UFix64) {
+        prepare(serviceAccount: auth(Storage) &Account) {
+          // Get user's account
+          let userAccount = getAccount(userAddress)
+          
+          // Get the authorization capability
+          let authCap = userAccount.capabilities
+            .get<&ScheduledTransfer.TransferAuthorization>(/public/scheduledTransferAuth)
+            .borrow()
+            ?? panic("Could not borrow authorization capability from user account")
+          
+          // Execute the transfer
+          // This will withdraw from user's vault and send to recipient
+          authCap.executeTransfer(recipient: recipient, amount: amount)
+          
+          log("Scheduled transfer executed from ".concat(userAddress.toString())
+            .concat(" to ").concat(recipient.toString())
+            .concat(" amount: ").concat(amount.toString()))
+        }
+      }
+    `;
+    
+    return {
+      cadence: transaction,
+      args: (arg, t) => [
+        arg(userAddress, t.Address),
+        arg(recipient, t.Address),
+        arg(amount.toFixed(8), t.UFix64)
+      ]
+    };
+  } catch (error) {
+    console.error('Error creating execution transaction:', error);
+    throw error;
+  }
+};
+
+/**
+ * Check if user has authorized backend for scheduled transfers
+ */
+const checkBackendAuthorization = async (userAddress) => {
   try {
     const result = await fcl.query({
       cadence: `
@@ -35,32 +207,23 @@ const checkAuthorization = async (userAddress) => {
         access(all) fun main(userAddress: Address): {String: AnyStruct} {
           let userAccount = getAccount(userAddress)
           
-          let authManagerRef = userAccount.getCapability<&ScheduledTransfer.AuthorizationManager{ScheduledTransfer.AuthorizationPublic}>(
-            ScheduledTransfer.AuthorizationPublicPath
-          ).borrow()
-          
-          if authManagerRef == nil {
+          if let authCap = userAccount.capabilities
+            .get<&ScheduledTransfer.TransferAuthorization>(/public/scheduledTransferAuth)
+            .borrow() {
+            
             return {
-              "hasAuthorization": false,
-              "isValid": false,
-              "maxAmount": 0.0,
-              "expiryDate": 0.0,
-              "message": "No authorization manager found"
+              "isAuthorized": true,
+              "maxAmountPerTransfer": authCap.maxAmountPerTransfer,
+              "authorizedAccount": authCap.authorizedAccount,
+              "isRevoked": authCap.isRevoked
             }
           }
           
-          let isValid = authManagerRef!.isValid()
-          let maxAmount = authManagerRef!.getMaxAmount()
-          let expiryDate = authManagerRef!.getExpiryDate()
-          let authId = authManagerRef!.getAuthId()
-          
           return {
-            "hasAuthorization": true,
-            "isValid": isValid,
-            "authId": authId,
-            "maxAmount": maxAmount,
-            "expiryDate": expiryDate,
-            "message": isValid ? "Authorization is valid" : "Authorization expired or inactive"
+            "isAuthorized": false,
+            "maxAmountPerTransfer": 0.0,
+            "authorizedAccount": nil,
+            "isRevoked": false
           }
         }
       `,
@@ -69,217 +232,76 @@ const checkAuthorization = async (userAddress) => {
     
     return result;
   } catch (error) {
-    console.error('Error checking authorization:', error);
+    console.error('Error checking backend authorization:', error);
     throw error;
   }
 };
 
 /**
- * Execute a scheduled transfer using Flow Actions InsuredTransfer
- * This is called by the backend service account
- */
-const executeScheduledTransfer = async (userAddress, recipient, amount, retryLimit = 3) => {
-  try {
-    console.log('🔄 Executing scheduled transfer via Flow Actions:');
-    console.log(`   User: ${userAddress}`);
-    console.log(`   Recipient: ${recipient}`);
-    console.log(`   Amount: ${amount} FLOW`);
-    console.log(`   Retry Limit: ${retryLimit}`);
-    
-    // Get service account credentials
-    const servicePrivateKey = process.env.SERVICE_ACCOUNT_PRIVATE_KEY;
-    const serviceAddress = process.env.SERVICE_ACCOUNT_ADDRESS;
-    
-    if (!servicePrivateKey || !serviceAddress) {
-      console.warn('⚠️  Service account not configured, using development mode');
-      return {
-        success: true,
-        transactionId: `dev_tx_${Date.now()}`,
-        status: 'SEALED',
-        message: 'Development mode - transaction simulated'
-      };
-    }
-
-    // Configure FCL authorization for service account
-    const authorization = fcl.authz;
-    
-    // Execute insured transfer action via Flow Actions
-    const txId = await fcl.mutate({
-      cadence: `
-        import FlowSureActions from ${serviceAddress}
-        import FungibleToken from 0x9a0766d93b6608b7
-        import FlowToken from 0x7e60df042a9c0868
-        import Scheduler from ${serviceAddress}
-        
-        transaction(userAddress: Address, recipient: Address, amount: UFix64, retryLimit: UInt8) {
-          
-          let action: FlowSureActions.InsuredTransferAction
-          let userVaultRef: auth(FungibleToken.Withdraw) &FlowToken.Vault
-          let recipientVaultCap: Capability<&{FungibleToken.Receiver}>
-          
-          prepare(signer: auth(BorrowValue) &Account) {
-            // Create insured transfer action
-            self.action = FlowSureActions.createInsuredTransfer(
-              baseFee: 0.02,
-              compensationAmount: 5.0,
-              retryLimit: retryLimit,
-              retryDelay: 30.0
-            )
-            
-            // Get user's vault reference (requires authorization)
-            let userAccount = getAccount(userAddress)
-            self.userVaultRef = userAccount.storage.borrow<auth(FungibleToken.Withdraw) &FlowToken.Vault>(
-              from: /storage/flowTokenVault
-            ) ?? panic("Could not borrow user's FlowToken vault")
-            
-            // Get recipient's receiver capability
-            let recipientAccount = getAccount(recipient)
-            self.recipientVaultCap = recipientAccount.capabilities.get<&{FungibleToken.Receiver}>(
-              /public/flowTokenReceiver
-            )
-            
-            if !self.recipientVaultCap.check() {
-              panic("Recipient does not have a valid FlowToken receiver")
-            }
-            
-            log("Action created: ".concat(self.action.uniqueID))
-            log("Action type: ".concat(self.action.getActionType()))
-          }
-          
-          execute {
-            // Withdraw tokens from user's vault
-            let tokens <- self.userVaultRef.withdraw(amount: amount)
-            
-            // Deposit to recipient
-            let receiverRef = self.recipientVaultCap.borrow()
-              ?? panic("Could not borrow recipient's receiver reference")
-            
-            receiverRef.deposit(from: <-tokens)
-            
-            // Execute action for tracking and insurance
-            let params: {String: AnyStruct} = {
-              "recipient": recipient,
-              "amount": amount,
-              "shouldFail": false
-            }
-            
-            let result = self.action.execute(user: userAddress, params: params)
-            
-            log("Transfer executed successfully")
-            log("Action ID: ".concat(result.actionId))
-            log("Success: ".concat(result.success.toString()))
-            
-            if !result.success {
-              // Schedule retry via Scheduler
-              let schedulerRef = Scheduler.borrowSchedulerManager()
-              schedulerRef.scheduleRetry(
-                actionId: result.actionId,
-                user: userAddress,
-                targetAction: "transfer",
-                params: params,
-                retryLimit: retryLimit,
-                delay: 30.0
-              )
-            }
-          }
-        }
-      `,
-      args: (arg, t) => [
-        arg(userAddress, t.Address),
-        arg(recipient, t.Address),
-        arg(amount.toFixed(8), t.UFix64),
-        arg(retryLimit.toString(), t.UInt8)
-      ],
-      proposer: authorization,
-      payer: authorization,
-      authorizations: [authorization],
-      limit: 9999
-    });
-    
-    console.log(`📝 Transaction submitted: ${txId}`);
-    
-    // Wait for transaction to be sealed
-    const sealed = await fcl.tx(txId).onceSealed();
-    
-    console.log(`✅ Transaction sealed: ${txId}`);
-    console.log(`   Status: ${sealed.status}`);
-    console.log(`   Status Code: ${sealed.statusCode}`);
-    
-    const isSuccess = sealed.status === 4 && sealed.statusCode === 0;
-    
-    if (!isSuccess) {
-      console.error(`❌ Transaction failed:`, sealed.errorMessage);
-    }
-    
-    return {
-      success: isSuccess,
-      transactionId: txId,
-      sealed,
-      status: isSuccess ? 'SEALED' : 'FAILED',
-      errorMessage: sealed.errorMessage
-    };
-  } catch (error) {
-    console.error('❌ Error executing scheduled transfer:', error);
-    return {
-      success: false,
-      error: error.message,
-      status: 'FAILED'
-    };
-  }
-};
-
-/**
- * Create authorization for a user (called from frontend)
- * This returns the transaction code that the user needs to sign
+ * Get transaction for user to authorize backend for scheduled transfers
+ * User signs this once to allow backend to execute transfers on their behalf
  */
 const getAuthorizationTransaction = (maxAmountPerTransfer, expiryDays) => {
+  const serviceAccount = process.env.FLOW_SERVICE_ACCOUNT_ADDRESS;
+  
   return {
     cadence: `
       import ScheduledTransfer from 0x8401ed4fc6788c8a
-      
-      transaction(maxAmountPerTransfer: UFix64, expiryDays: UFix64) {
-        
-        prepare(signer: AuthAccount) {
-          let expiryDate = getCurrentBlock().timestamp + (expiryDays * 86400.0)
-          
-          if signer.borrow<&ScheduledTransfer.AuthorizationManager>(
-            from: ScheduledTransfer.AuthorizationStoragePath
-          ) == nil {
-            let authManager <- ScheduledTransfer.createAuthorizationManager()
-            signer.save(<-authManager, to: ScheduledTransfer.AuthorizationStoragePath)
-            
-            signer.link<&ScheduledTransfer.AuthorizationManager{ScheduledTransfer.AuthorizationPublic}>(
-              ScheduledTransfer.AuthorizationPublicPath,
-              target: ScheduledTransfer.AuthorizationStoragePath
-            )
+      import FlowToken from 0x7e60df042a9c0868
+      import FungibleToken from 0x9a0766d93b6608b7
+
+      transaction(maxAmountPerTransfer: UFix64, serviceAccount: Address) {
+        prepare(signer: auth(Storage, Capabilities) &Account) {
+          // Destroy existing authorization if present
+          if signer.storage.borrow<&AnyResource>(from: /storage/scheduledTransferAuth) != nil {
+            let oldAuth <- signer.storage.load<@AnyResource>(from: /storage/scheduledTransferAuth)
+            destroy oldAuth
           }
+
+          // Issue withdraw capability for FlowToken vault
+          let withdrawCap = signer.capabilities.storage
+            .issue<auth(FungibleToken.Withdraw) &FlowToken.Vault>(/storage/flowTokenVault)
           
-          let authManagerRef = signer.borrow<&ScheduledTransfer.AuthorizationManager>(
-            from: ScheduledTransfer.AuthorizationStoragePath
-          ) ?? panic("Could not borrow authorization manager")
-          
-          let authId = authManagerRef.createAuthorization(
+          // Create the authorization resource
+          let authorization <- ScheduledTransfer.createAuthorization(
+            withdrawCapability: withdrawCap,
             maxAmountPerTransfer: maxAmountPerTransfer,
-            expiryDate: expiryDate
+            authorizedAccount: serviceAccount
           )
           
-          log("Authorization created: ".concat(authId))
-        }
-        
-        execute {
-          log("Scheduled transfer authorization created successfully")
+          // Save to storage
+          signer.storage.save(<-authorization, to: /storage/scheduledTransferAuth)
+          
+          // Unpublish existing capability if present
+          signer.capabilities.unpublish(/public/scheduledTransferAuth)
+          
+          // Publish a public capability so backend can access it
+          let authCap = signer.capabilities.storage
+            .issue<&ScheduledTransfer.TransferAuthorization>(/storage/scheduledTransferAuth)
+          signer.capabilities.publish(authCap, at: /public/scheduledTransferAuth)
+          
+          log("Backend authorized for scheduled transfers")
         }
       }
     `,
     args: (arg, t) => [
       arg(maxAmountPerTransfer.toFixed(8), t.UFix64),
-      arg(expiryDays.toString(), t.UFix64)
+      arg(serviceAccount, t.Address)
     ]
   };
 };
 
+/**
+ * Alias for checkBackendAuthorization for consistency with route naming
+ */
+const checkAuthorization = checkBackendAuthorization;
+
 module.exports = {
-  checkAuthorization,
+  checkHandlerInitialized,
+  getInitHandlerTransaction,
+  getScheduleTransferTransaction,
   executeScheduledTransfer,
-  getAuthorizationTransaction
+  checkBackendAuthorization,
+  getAuthorizationTransaction,
+  checkAuthorization
 };

@@ -20,7 +20,9 @@
     "ws": "^8.16.0",
     "node-cron": "^3.0.3",
     "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.0"
+    "swagger-ui-express": "^5.0.0",
+    "sha3": "^2.1.4",
+    "elliptic": "^6.5.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",

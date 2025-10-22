@@ -38,15 +38,36 @@ cp .env.example .env
 ```
 
 ### Environment Variables
-
+  
 ```env
 FLOW_NETWORK=testnet
 FLOW_ACCESS_NODE=https://rest-testnet.onflow.org
-FROTH_REWARDS_ADDRESS=0x8401ed4fc6788c8a
+# Contract addresses (Testnet)
+FROTH_REWARDS_ADDRESS=0x8401ed4fc6788c8a   # FrothRewardsV2
+AUTO_COMPOUND_ADDRESS=0x8401ed4fc6788c8a   # AutoCompound (if used)
+SCHEDULER_ADDRESS=0x8401ed4fc6788c8a       # Scheduler / InsuredAction account
 DAPPER_PROTECTION_ADDRESS=0x8401ed4fc6788c8a
+# Note: ScheduledTransfer uses the scheduler account address
+# via SCHEDULER_ADDRESS mapping in code. Set SCHEDULER_ADDRESS to the
+# scheduler account that deployed ScheduledTransfer (0xfe1ad3a05230e532).
+
+# Backend
 MONGODB_URI=mongodb://localhost:27017/flowsure
 PORT=3000
+
+# Service account (used to execute scheduled transfers)
+FLOW_SERVICE_ACCOUNT_ADDRESS=0xYourServiceAccountAddress
+FLOW_SERVICE_ACCOUNT_PRIVATE_KEY=yourhexprivatekey
+FLOW_SERVICE_ACCOUNT_KEY_ID=0
 ```
+
+#### Deployed Contracts (Testnet)
+- **InsuranceVault**: `0x8401ed4fc6788c8a`
+- **Scheduler**: `0x8401ed4fc6788c8a`
+- **FrothRewardsV2**: `0x8401ed4fc6788c8a`
+- **DapperAssetProtection**: `0x8401ed4fc6788c8a`
+- **InsuredAction**: `0x8401ed4fc6788c8a`
+- **ScheduledTransfer**: `0xfe1ad3a05230e532`
 
 ### Running
 

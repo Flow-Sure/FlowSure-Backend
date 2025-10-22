@@ -1,7 +1,8 @@
 const ScheduledTransfer = require('../models/ScheduledTransfer');
 const { executeInsuredAction } = require('./transactionService');
-const { executeScheduledTransfer: executeOnChain, checkAuthorization } = require('./scheduledTransferFlowService');
+const { executeScheduledTransfer: getExecutionTransaction, checkBackendAuthorization } = require('./scheduledTransferFlowService');
 const { generateNextInstance } = require('./recurringTransferService');
+const { fcl, getServiceAccountAuthorization } = require('../config/flow');
 
 /**
  * Execute a scheduled transfer
@@ -19,78 +20,58 @@ const executeScheduledTransfer = async (transferId) => {
       throw new Error(`Transfer status is ${transfer.status}, cannot execute`);
     }
 
-    // Check if user has valid authorization
-    const authCheck = await checkAuthorization(transfer.userAddress);
-    if (!authCheck.isValid) {
-      throw new Error('User authorization is invalid or expired');
+    // Check if user has authorized backend
+    const authCheck = await checkBackendAuthorization(transfer.userAddress);
+    if (!authCheck.isAuthorized || authCheck.isRevoked) {
+      throw new Error('User has not authorized backend or authorization is revoked');
     }
 
-    // Calculate total amount needed
-    const recipients = transfer.recipients && transfer.recipients.length > 0 
-      ? transfer.recipients 
-      : [{ address: transfer.recipient }];
-    
-    const totalAmount = transfer.amountPerRecipient 
-      ? transfer.amount * recipients.length 
-      : transfer.amount;
-
     // Validate amount against authorization
-    if (totalAmount > authCheck.maxAmount) {
-      throw new Error(`Total transfer amount ${totalAmount} exceeds authorized maximum ${authCheck.maxAmount}`);
+    if (transfer.amount > authCheck.maxAmountPerTransfer) {
+      throw new Error(`Transfer amount ${transfer.amount} exceeds authorized maximum ${authCheck.maxAmountPerTransfer}`);
     }
 
     // Update status to executing
     transfer.status = 'executing';
     await transfer.save();
 
-    // Execute transfers for all recipients
-    const results = [];
-    let allSuccessful = true;
+    // Get execution transaction
+    const transaction = await getExecutionTransaction(
+      transfer.userAddress,
+      transfer.recipient,
+      transfer.amount
+    );
 
-    for (const recipient of recipients) {
-      const recipientAmount = transfer.amountPerRecipient 
-        ? transfer.amount 
-        : transfer.amount / recipients.length;
+    // Execute with service account
+    const serviceAuth = getServiceAccountAuthorization();
+    const txId = await fcl.mutate({
+      cadence: transaction.cadence,
+      args: transaction.args,
+      proposer: serviceAuth,
+      payer: serviceAuth,
+      authorizations: [serviceAuth],
+      limit: 9999
+    });
 
-      try {
-        const result = await executeOnChain(
-          transfer.userAddress,
-          recipient.address,
-          recipientAmount,
-          transfer.retryLimit
-        );
+    // Wait for seal
+    await fcl.tx(txId).onceSealed();
 
-        results.push({
-          recipient: recipient.address,
-          transactionId: result.transactionId,
-          status: result.success ? 'completed' : 'failed',
-          error: result.error
-        });
-
-        if (!result.success) {
-          allSuccessful = false;
-        }
-      } catch (error) {
-        results.push({
-          recipient: recipient.address,
-          status: 'failed',
-          error: error.message
-        });
-        allSuccessful = false;
-      }
-    }
+    const results = [{
+      recipient: transfer.recipient,
+      transactionId: txId,
+      status: 'completed'
+    }];
+    const allSuccessful = true;
 
     if (allSuccessful) {
       transfer.status = 'completed';
       transfer.executedAt = new Date();
       transfer.transactionIds = results;
-      if (recipients.length === 1) {
-        transfer.transactionId = results[0].transactionId;
-      }
+      transfer.transactionId = results[0].transactionId;
       await transfer.save();
 
       console.log(`✅ Scheduled transfer ${transferId} executed successfully`);
-      console.log(`   Sent to ${recipients.length} recipient(s)`);
+      console.log(`   Transaction: ${txId}`);
       
       // Generate next instance if recurring
       if (transfer.parentRecurringId) {
@@ -116,10 +97,21 @@ const executeScheduledTransfer = async (transferId) => {
     try {
       const transfer = await ScheduledTransfer.findById(transferId);
       if (transfer) {
-        transfer.status = 'failed';
-        transfer.executedAt = new Date();
-        transfer.errorMessage = error.message;
-        await transfer.save();
+        const canRetry = transfer.executionMethod === 'backend' && (transfer.retryCount || 0) < (transfer.retryLimit || 0);
+        if (canRetry) {
+          transfer.retryCount = (transfer.retryCount || 0) + 1;
+          const backoffMinutes = 5;
+          transfer.scheduledDate = new Date(Date.now() + backoffMinutes * 60 * 1000);
+          transfer.status = 'scheduled';
+          transfer.errorMessage = error.message;
+          await transfer.save();
+          console.log(`↩️  Rescheduled transfer ${transferId} for retry ${transfer.retryCount}/${transfer.retryLimit} in ${backoffMinutes}m`);
+        } else {
+          transfer.status = 'failed';
+          transfer.executedAt = new Date();
+          transfer.errorMessage = error.message;
+          await transfer.save();
+        }
       }
     } catch (updateError) {
       console.error('Failed to update transfer status:', updateError);
@@ -143,6 +135,7 @@ const processDueTransfers = async () => {
     // Find all scheduled transfers that are due
     const dueTransfers = await ScheduledTransfer.find({
       status: 'scheduled',
+      executionMethod: 'backend',
       scheduledDate: { $lte: now }
     }).sort({ scheduledDate: 1 });
 

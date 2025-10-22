@@ -53,6 +53,10 @@ const scheduledTransferSchema = new mongoose.Schema({
     type: Number,
     default: 3
   },
+  retryCount: {
+    type: Number,
+    default: 0
+  },
   executedAt: {
     type: Date
   },
@@ -67,6 +71,11 @@ const scheduledTransferSchema = new mongoose.Schema({
   }],
   errorMessage: {
     type: String
+  },
+  executionMethod: {
+    type: String,
+    enum: ['backend', 'flow_native'],
+    default: 'backend'
   },
   isRecurring: {
     type: Boolean,
