@@ -185,17 +185,3 @@ npm test
 # Lint code
 npm run lint
 ```
-
-## Deployment
-
-The backend can be deployed to:
-- Vercel
-- Render
-- Railway
-- Any Node.js hosting platform
-
-Ensure MongoDB is accessible and environment variables are configured.
-
-## License
-
-MIT
